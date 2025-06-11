@@ -1,57 +1,33 @@
-# Use Node.js 20 LTS as base image
-FROM node:20-bullseye
+# Minimal Dockerfile for debugging
+FROM node:18-bullseye-slim
 
-# Install system dependencies
+# Install only essential dependencies
 RUN apt-get update && apt-get install -y \
-    # FFmpeg and related tools
     ffmpeg \
-    # X Virtual Framebuffer for headless operation
     xvfb \
-    # Init system for proper signal handling
     dumb-init \
-    # Additional dependencies that might be needed
-    fonts-liberation \
-    fonts-dejavu-core \
-    fontconfig \
-    # Canvas dependencies (for editly)
-    libcairo2-dev \
-    libpango1.0-dev \
-    libjpeg-dev \
-    libgif-dev \
-    librsvg2-dev \
-    # Cleanup
+    curl \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Set working directory
 WORKDIR /app
 
-# Copy package files first for better Docker layer caching
+# Copy package files
 COPY package*.json ./
 
-# Install Node.js dependencies
-RUN npm ci --only=production
+# Install dependencies
+RUN npm install --production
 
-# Install editly globally
-RUN npm install -g editly
-
-# Copy application code
+# Copy server
 COPY server.js ./
 
-# Create tmp directory with proper permissions
-RUN mkdir -p /tmp && chmod 1777 /tmp
-
-# Set environment variables
+# Environment variables
 ENV NODE_ENV=production
 ENV DISPLAY=:99
+ENV PORT=8080
 
-# Expose port 8080 (Cloud Run default)
 EXPOSE 8080
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8080/health || exit 1
-
-# Use dumb-init to handle signals properly and run with xvfb
+# Simple startup without user switching
 ENTRYPOINT ["dumb-init", "--"]
-CMD ["sh", "-c", "Xvfb :99 -screen 0 1024x768x24 -ac +extension GLX +render -noreset & node server.js"]
+CMD ["sh", "-c", "Xvfb :99 -screen 0 1024x768x24 & sleep 2 && node server.js"]
