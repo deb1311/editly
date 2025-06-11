@@ -1,68 +1,57 @@
-FROM node:lts-bookworm AS build
+# Use Node.js 20 LTS as base image
+FROM node:20-bullseye
 
-# Install dependencies for building canvas/gl
-RUN apt-get update -y
-
-RUN apt-get -y install \
-    build-essential \
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    # FFmpeg and related tools
+    ffmpeg \
+    # X Virtual Framebuffer for headless operation
+    xvfb \
+    # Init system for proper signal handling
+    dumb-init \
+    # Additional dependencies that might be needed
+    fonts-liberation \
+    fonts-dejavu-core \
+    fontconfig \
+    # Canvas dependencies (for editly)
     libcairo2-dev \
-    libgif-dev \
-    libgl1-mesa-dev \
-    libglew-dev \
-    libglu1-mesa-dev \
-    libjpeg-dev \
     libpango1.0-dev \
+    libjpeg-dev \
+    libgif-dev \
     librsvg2-dev \
-    libxi-dev \
-    pkg-config \
-    python-is-python3
+    # Cleanup
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
+# Set working directory
 WORKDIR /app
 
-# Install node dependencies
-COPY package.json ./
-RUN npm install --no-fund --no-audit
+# Copy package files first for better Docker layer caching
+COPY package*.json ./
 
-# Add app source
-COPY . .
+# Install Node.js dependencies
+RUN npm ci --only=production
 
-# Build TypeScript
-RUN npm run build
+# Install editly globally
+RUN npm install -g editly
 
-# Prune dev dependencies
-RUN npm prune --omit=dev
+# Copy application code
+COPY server.js ./
 
-# Purge build dependencies
-RUN apt-get --purge autoremove -y \
-    build-essential \
-    libcairo2-dev \
-    libgif-dev \
-    libgl1-mesa-dev \
-    libglew-dev \
-    libglu1-mesa-dev \
-    libjpeg-dev \
-    libpango1.0-dev \
-    librsvg2-dev \
-    libxi-dev \
-    pkg-config \
-    python-is-python3
+# Create tmp directory with proper permissions
+RUN mkdir -p /tmp && chmod 1777 /tmp
 
-# Remove Apt cache
-RUN rm -rf /var/lib/apt/lists/* /var/cache/apt/*
+# Set environment variables
+ENV NODE_ENV=production
+ENV DISPLAY=:99
 
-# Final stage for app image
-FROM node:lts-bookworm
+# Expose port 8080 (Cloud Run default)
+EXPOSE 8080
 
-# Install runtime dependencies
-RUN apt-get update -y \
-  && apt-get -y install ffmpeg dumb-init xvfb libcairo2 libpango1.0 libgif7 librsvg2-2 \
-  && rm -rf /var/lib/apt/lists/* /var/cache/apt/*
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8080/health || exit 1
 
-WORKDIR /app
-COPY --from=build /app /app
-
-# Ensure `editly` binary available in container
-RUN npm link
-
-ENTRYPOINT ["/usr/bin/dumb-init", "--", "xvfb-run", "--server-args", "-screen 0 1280x1024x24 -ac"]
-CMD [ "editly" ]
+# Use dumb-init to handle signals properly and run with xvfb
+ENTRYPOINT ["dumb-init", "--"]
+CMD ["sh", "-c", "Xvfb :99 -screen 0 1024x768x24 -ac +extension GLX +render -noreset & node server.js"]
